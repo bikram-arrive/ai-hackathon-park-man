@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>PARKMAN | Arrive</title>
+		<style>
+			:root {
+				--arrive-p1: #5f016f;
+				--arrive-p2: #ff33bb;
+				--asphalt: #1a1a1a;
+				--off-white: #f9f5f4;
+				--p4: #ffade4;
+				--fine-yellow: #ffd700;
+				--parking-blue: #0033aa;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			html,
+			body {
+				margin: 0;
+				width: 100%;
+				height: 100%;
+				overflow: hidden;
+				font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+				background: radial-gradient(circle at 20% 20%, #2b2b2b 0%, #0f0f0f 80%);
+				color: #ffffff;
+			}
+
+			#app {
+				width: 100%;
+				height: 100%;
+			}
+
+			#brand {
+				position: fixed;
+				top: 14px;
+				left: 16px;
+				z-index: 10;
+				font-size: 1.5rem;
+				font-weight: 800;
+				letter-spacing: 0.06em;
+				color: var(--arrive-p2);
+				text-transform: uppercase;
+				text-shadow: 0 0 12px rgba(255, 51, 187, 0.45);
+			}
+
+			#hud {
+				position: fixed;
+				top: 58px;
+				left: 16px;
+				z-index: 10;
+				min-width: 230px;
+				background: rgba(10, 10, 10, 0.75);
+				border: 1px solid rgba(255, 51, 187, 0.35);
+				border-radius: 12px;
+				padding: 10px 12px;
+				backdrop-filter: blur(4px);
+			}
+
+			#hud p {
+				margin: 6px 0;
+				font-size: 0.95rem;
+			}
+
+			.value {
+				color: var(--p4);
+				font-weight: 700;
+			}
+
+			#overlay {
+				position: fixed;
+				inset: 0;
+				z-index: 20;
+				display: none;
+				align-items: center;
+				justify-content: center;
+				background: rgba(0, 0, 0, 0.78);
+			}
+
+			#overlay.show {
+				display: flex;
+			}
+
+			.panel {
+				width: min(420px, calc(100vw - 32px));
+				border-radius: 14px;
+				padding: 18px 20px;
+				text-align: center;
+				background: linear-gradient(160deg, #211328, #120f16);
+				border: 1px solid rgba(255, 173, 228, 0.35);
+			}
+
+			.panel h2 {
+				margin: 0 0 10px;
+				font-size: clamp(1.6rem, 5vw, 2.2rem);
+				color: var(--arrive-p2);
+			}
+
+			.panel p {
+				margin: 8px 0;
+			}
+
+			#retryBtn {
+				margin-top: 10px;
+				border: 0;
+				border-radius: 10px;
+				padding: 10px 18px;
+				font-size: 1rem;
+				font-weight: 700;
+				color: #1a1a1a;
+				background: linear-gradient(90deg, var(--arrive-p2), var(--p4));
+				cursor: pointer;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="app"></div>
+		<div id="brand">Arrive | PARKMAN</div>
+		<section id="hud" aria-live="polite">
+			<p>Score: <span id="score" class="value">0</span></p>
+			<p>Signs Left: <span id="signsLeft" class="value">20</span></p>
+			<p>Current Speed: <span id="speed" class="value">0.0</span></p>
+			<p>Status: <span id="status" class="value">Collect all parking signs</span></p>
+		</section>
+
+		<section id="overlay" role="dialog" aria-modal="true">
+			<div class="panel">
+				<h2 id="overlayTitle">GAME OVER</h2>
+				<p id="overlayText">You hit a Swedish fine.</p>
+				<p>Final Score: <span id="finalScore" class="value">0</span></p>
+				<button id="retryBtn" type="button">RETRY</button>
+			</div>
+		</section>
+
+		<script type="module">
+			import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
+
+			const scoreEl = document.getElementById("score");
+			const signsLeftEl = document.getElementById("signsLeft");
+			const speedEl = document.getElementById("speed");
+			const statusEl = document.getElementById("status");
+			const overlayEl = document.getElementById("overlay");
+			const overlayTitleEl = document.getElementById("overlayTitle");
+			const overlayTextEl = document.getElementById("overlayText");
+			const finalScoreEl = document.getElementById("finalScore");
+			const retryBtn = document.getElementById("retryBtn");
+
+			const scene = new THREE.Scene();
+			scene.background = new THREE.Color(0x0e0e11);
+			scene.fog = new THREE.Fog(0x0e0e11, 70, 220);
+
+			const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 500);
+			const renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+			renderer.shadowMap.enabled = true;
+			document.getElementById("app").appendChild(renderer.domElement);
+
+			const hemi = new THREE.HemisphereLight(0xffffff, 0x333333, 0.7);
+			scene.add(hemi);
+
+			const dir = new THREE.DirectionalLight(0xffffff, 0.95);
+			dir.position.set(30, 45, 25);
+			dir.castShadow = true;
+			dir.shadow.camera.left = -120;
+			dir.shadow.camera.right = 120;
+			dir.shadow.camera.top = 120;
+			dir.shadow.camera.bottom = -120;
+			scene.add(dir);
+
+			const CELL = 8;
+			const GRID_RADIUS = 12;
+			const ROAD_EVERY = 3;
+			const WORLD_LIMIT = GRID_RADIUS * CELL;
+			const TURN_EPSILON = 0.35;
+
+			const ground = new THREE.Mesh(
+				new THREE.PlaneGeometry(WORLD_LIMIT * 2 + 20, WORLD_LIMIT * 2 + 20),
+				new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1 })
+			);
+			ground.rotation.x = -Math.PI / 2;
+			ground.receiveShadow = true;
+			scene.add(ground);
+
+			const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x262626, roughness: 0.95 });
+			const buildingMaterial = new THREE.MeshStandardMaterial({ color: 0xf9f5f4, roughness: 0.88 });
+			const buildingAccent = new THREE.MeshStandardMaterial({ color: 0xffade4, roughness: 0.6 });
+
+			const roadPositions = [];
+
+			function isRoadCell(ix, iz) {
+				return ix % ROAD_EVERY === 0 || iz % ROAD_EVERY === 0;
+			}
+
+			for (let ix = -GRID_RADIUS; ix <= GRID_RADIUS; ix += 1) {
+				for (let iz = -GRID_RADIUS; iz <= GRID_RADIUS; iz += 1) {
+					const x = ix * CELL;
+					const z = iz * CELL;
+					const isRoad = isRoadCell(ix, iz);
+
+					if (isRoad) {
+						const road = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.98, 0.2, CELL * 0.98), roadMaterial);
+						road.position.set(x, 0.1, z);
+						road.receiveShadow = true;
+						scene.add(road);
+						roadPositions.push({ x, z, ix, iz });
+					} else {
+						const height = 10 + Math.random() * 24;
+						const b = new THREE.Mesh(
+							new THREE.BoxGeometry(CELL * 0.86, height, CELL * 0.86),
+							buildingMaterial
+						);
+						b.position.set(x, height * 0.5, z);
+						b.castShadow = true;
+						b.receiveShadow = true;
+						scene.add(b);
+
+						const accent = new THREE.Mesh(
+							new THREE.BoxGeometry(CELL * 0.35, height * 0.5, CELL * 0.1),
+							buildingAccent
+						);
+						accent.position.set(x + CELL * 0.2, height * 0.5, z + CELL * 0.38);
+						scene.add(accent);
+					}
+				}
+			}
+
+			const car = new THREE.Group();
+			const carBody = new THREE.Mesh(
+				new THREE.BoxGeometry(4.2, 1.2, 6.2),
+				new THREE.MeshStandardMaterial({ color: 0x5f016f, roughness: 0.45, metalness: 0.25 })
+			);
+			carBody.position.y = 1.1;
+			carBody.castShadow = true;
+			car.add(carBody);
+
+			const carAccent = new THREE.Mesh(
+				new THREE.BoxGeometry(2.8, 0.6, 2.6),
+				new THREE.MeshStandardMaterial({ color: 0xff33bb, roughness: 0.35, metalness: 0.2 })
+			);
+			carAccent.position.set(0, 1.95, -0.4);
+			carAccent.castShadow = true;
+			car.add(carAccent);
+
+			function makeWheel(x, z) {
+				const wheel = new THREE.Mesh(
+					new THREE.CylinderGeometry(0.6, 0.6, 0.55, 16),
+					new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.85 })
+				);
+				wheel.rotation.z = Math.PI * 0.5;
+				wheel.position.set(x, 0.62, z);
+				wheel.castShadow = true;
+				car.add(wheel);
+			}
+
+			makeWheel(-1.7, -2.2);
+			makeWheel(1.7, -2.2);
+			makeWheel(-1.7, 2.2);
+			makeWheel(1.7, 2.2);
+
+			car.position.set(0, 0, 0);
+			scene.add(car);
+
+			const signPool = [];
+			const finePool = [];
+			const obstacles = [];
+
+			function randomRoadSpot(exclusions = []) {
+				for (let tries = 0; tries < 300; tries += 1) {
+					const p = roadPositions[Math.floor(Math.random() * roadPositions.length)];
+					if (Math.abs(p.x) < 8 && Math.abs(p.z) < 8) {
+						continue;
+					}
+					let blocked = false;
+					for (const ex of exclusions) {
+						if (Math.abs(ex.x - p.x) < 1 && Math.abs(ex.z - p.z) < 1) {
+							blocked = true;
+							break;
+						}
+					}
+					if (!blocked) {
+						return p;
+					}
+				}
+				return roadPositions[0];
+			}
+
+			function createParkingSign(x, z) {
+				const g = new THREE.Group();
+				const pole = new THREE.Mesh(
+					new THREE.CylinderGeometry(0.18, 0.18, 2.4, 10),
+					new THREE.MeshStandardMaterial({ color: 0xdadada })
+				);
+				pole.position.y = 1.2;
+				g.add(pole);
+
+				const board = new THREE.Mesh(
+					new THREE.BoxGeometry(1.45, 1.45, 0.15),
+					new THREE.MeshStandardMaterial({ color: 0x0033aa, emissive: 0x001144 })
+				);
+				board.position.y = 2.4;
+				board.castShadow = true;
+				g.add(board);
+
+				g.position.set(x, 0.02, z);
+				scene.add(g);
+				signPool.push(g);
+			}
+
+			const signExclusions = [];
+			for (let i = 0; i < 20; i += 1) {
+				const p = randomRoadSpot(signExclusions);
+				signExclusions.push({ x: p.x, z: p.z });
+				createParkingSign(p.x, p.z);
+			}
+
+			function createFineMesh() {
+				const fine = new THREE.Group();
+				const left = new THREE.Mesh(
+					new THREE.BoxGeometry(1.2, 1.8, 0.08),
+					new THREE.MeshStandardMaterial({ color: 0xffd700, roughness: 0.4, metalness: 0.2 })
+				);
+				left.rotation.y = -0.22;
+				const right = left.clone();
+				right.rotation.y = 0.22;
+				right.position.x = 0.58;
+				fine.add(left);
+				fine.add(right);
+				fine.position.y = 1.6;
+				scene.add(fine);
+				return fine;
+			}
+
+			function createPatroller(path, speed) {
+				const mesh = createFineMesh();
+				mesh.position.set(path[0].x, 1.6, path[0].z);
+				finePool.push({ mesh, mode: "patrol", path, index: 1, speed, bob: Math.random() * Math.PI * 2 });
+			}
+
+			function createChaser(speed) {
+				const mesh = createFineMesh();
+				mesh.position.set(WORLD_LIMIT - 8, 1.6, WORLD_LIMIT - 8);
+				finePool.push({ mesh, mode: "chase", speed, bob: Math.random() * Math.PI * 2 });
+			}
+
+			createPatroller(
+				[
+					new THREE.Vector3(-48, 1.6, -24),
+					new THREE.Vector3(-24, 1.6, -24),
+					new THREE.Vector3(-24, 1.6, 0),
+					new THREE.Vector3(-48, 1.6, 0),
+				],
+				5.8
+			);
+			createPatroller(
+				[
+					new THREE.Vector3(24, 1.6, 24),
+					new THREE.Vector3(48, 1.6, 24),
+					new THREE.Vector3(48, 1.6, 48),
+					new THREE.Vector3(24, 1.6, 48),
+				],
+				6.2
+			);
+			createChaser(5.4);
+
+			const keyState = { up: false, down: false, left: false, right: false };
+
+			const cardinal = {
+				up: new THREE.Vector2(0, -1),
+				down: new THREE.Vector2(0, 1),
+				left: new THREE.Vector2(-1, 0),
+				right: new THREE.Vector2(1, 0),
+			};
+
+			let pendingTurn = null;
+			let heading = new THREE.Vector2(1, 0);
+			let score = 0;
+			let signsCollected = 0;
+			let baseSpeed = 9;
+			let gameOver = false;
+			let won = false;
+			let gridlockSpawned = false;
+
+			const carBox = new THREE.Box3();
+			const tempBox = new THREE.Box3();
+
+			function updateHUD() {
+				scoreEl.textContent = String(score);
+				signsLeftEl.textContent = String(signPool.length);
+				speedEl.textContent = baseSpeed.toFixed(1);
+			}
+
+			function setHeading(vec) {
+				heading.copy(vec);
+				if (heading.x === 1) car.rotation.y = -Math.PI * 0.5;
+				if (heading.x === -1) car.rotation.y = Math.PI * 0.5;
+				if (heading.y === 1) car.rotation.y = Math.PI;
+				if (heading.y === -1) car.rotation.y = 0;
+			}
+
+			setHeading(heading);
+
+			function handleKey(evt, pressed) {
+				const k = evt.key.toLowerCase();
+				if (k === "arrowup" || k === "w") keyState.up = pressed;
+				if (k === "arrowdown" || k === "s") keyState.down = pressed;
+				if (k === "arrowleft" || k === "a") keyState.left = pressed;
+				if (k === "arrowright" || k === "d") keyState.right = pressed;
+
+				if (!pressed) {
+					return;
+				}
+
+				if (k === "arrowup" || k === "w") pendingTurn = cardinal.up.clone();
+				if (k === "arrowdown" || k === "s") pendingTurn = cardinal.down.clone();
+				if (k === "arrowleft" || k === "a") pendingTurn = cardinal.left.clone();
+				if (k === "arrowright" || k === "d") pendingTurn = cardinal.right.clone();
+			}
+
+			window.addEventListener("keydown", (e) => handleKey(e, true));
+			window.addEventListener("keyup", (e) => handleKey(e, false));
+
+			function atIntersection() {
+				const step = CELL * ROAD_EVERY;
+				const ix = Math.round(car.position.x / step) * step;
+				const iz = Math.round(car.position.z / step) * step;
+				const near = Math.abs(car.position.x - ix) < TURN_EPSILON && Math.abs(car.position.z - iz) < TURN_EPSILON;
+				if (near) {
+					car.position.x = ix;
+					car.position.z = iz;
+				}
+				return near;
+			}
+
+			function maybeTurn() {
+				if (!pendingTurn || !atIntersection()) {
+					return;
+				}
+
+				const dot = heading.dot(pendingTurn);
+				if (dot === -1) {
+					return;
+				}
+
+				if (dot === 0) {
+					setHeading(pendingTurn);
+					pendingTurn = null;
+				}
+			}
+
+			function keepInBounds() {
+				car.position.x = THREE.MathUtils.clamp(car.position.x, -WORLD_LIMIT + 1, WORLD_LIMIT - 1);
+				car.position.z = THREE.MathUtils.clamp(car.position.z, -WORLD_LIMIT + 1, WORLD_LIMIT - 1);
+			}
+
+			function updateFines(delta, elapsed) {
+				for (const fine of finePool) {
+					if (fine.mode === "patrol") {
+						const target = fine.path[fine.index];
+						const toTarget = new THREE.Vector3(target.x, fine.mesh.position.y, target.z).sub(fine.mesh.position);
+						const dist = toTarget.length();
+						if (dist < 0.2) {
+							fine.index = (fine.index + 1) % fine.path.length;
+						} else {
+							toTarget.normalize();
+							fine.mesh.position.addScaledVector(toTarget, fine.speed * delta);
+						}
+					} else {
+						const toCar = new THREE.Vector3(car.position.x, fine.mesh.position.y, car.position.z).sub(fine.mesh.position);
+						const distToCar = Math.max(toCar.length(), 0.001);
+						toCar.multiplyScalar(1 / distToCar);
+						fine.mesh.position.addScaledVector(toCar, fine.speed * delta);
+					}
+
+					fine.mesh.position.y = 1.6 + Math.sin(elapsed * 3 + fine.bob) * 0.25;
+					fine.mesh.lookAt(car.position.x, fine.mesh.position.y, car.position.z);
+				}
+			}
+
+			function spawnGridlock() {
+				const count = 3 + Math.floor(Math.random() * 3);
+				const exclusions = [];
+				for (const s of signPool) {
+					exclusions.push({ x: s.position.x, z: s.position.z });
+				}
+				for (let i = 0; i < count; i += 1) {
+					const p = randomRoadSpot(exclusions);
+					exclusions.push({ x: p.x, z: p.z });
+
+					const cube = new THREE.Mesh(
+						new THREE.BoxGeometry(3.1, 3.1, 3.1),
+						new THREE.MeshStandardMaterial({ color: 0xc91f26, roughness: 0.6 })
+					);
+					cube.position.set(p.x, 1.56, p.z);
+					cube.castShadow = true;
+					cube.receiveShadow = true;
+					scene.add(cube);
+					obstacles.push(cube);
+				}
+			}
+
+			function endGame(didWin) {
+				gameOver = true;
+				won = didWin;
+				overlayEl.classList.add("show");
+				overlayTitleEl.textContent = didWin ? "VICTORY" : "GAME OVER";
+				overlayTextEl.textContent = didWin
+					? "You collected every parking sign in the smart city."
+					: "A fine or traffic jam got you.";
+				finalScoreEl.textContent = String(score);
+				statusEl.textContent = didWin ? "City conquered" : "Mission failed";
+			}
+
+			retryBtn.addEventListener("click", () => {
+				window.location.reload();
+			});
+
+			function runCollisions() {
+				// All gameplay interactions use axis-aligned bounding boxes as requested.
+				carBox.setFromObject(car);
+
+				for (let i = signPool.length - 1; i >= 0; i -= 1) {
+					const sign = signPool[i];
+					tempBox.setFromObject(sign);
+					if (carBox.intersectsBox(tempBox)) {
+						scene.remove(sign);
+						signPool.splice(i, 1);
+						score += 10;
+						signsCollected += 1;
+						statusEl.textContent = "Parking sign acquired";
+
+						if (signsCollected % 5 === 0) {
+							baseSpeed *= 1.15;
+						}
+
+						if (!gridlockSpawned && score >= 100) {
+							gridlockSpawned = true;
+							spawnGridlock();
+							statusEl.textContent = "Gridlock event active";
+						}
+					}
+				}
+
+				for (const fine of finePool) {
+					tempBox.setFromObject(fine.mesh);
+					if (carBox.intersectsBox(tempBox)) {
+						endGame(false);
+						return;
+					}
+				}
+
+				for (const obstacle of obstacles) {
+					tempBox.setFromObject(obstacle);
+					if (carBox.intersectsBox(tempBox)) {
+						endGame(false);
+						return;
+					}
+				}
+
+				if (signPool.length === 0) {
+					endGame(true);
+				}
+			}
+
+			function updateCamera(delta) {
+				const targetPos = new THREE.Vector3(car.position.x + 34, 44, car.position.z + 34);
+				camera.position.lerp(targetPos, Math.min(1, delta * 3.2));
+				camera.lookAt(car.position.x, 0, car.position.z);
+			}
+
+			const clock = new THREE.Clock();
+			updateHUD();
+
+			function animate() {
+				requestAnimationFrame(animate);
+				const delta = Math.min(clock.getDelta(), 0.03);
+				const elapsed = clock.elapsedTime;
+
+				if (!gameOver) {
+					maybeTurn();
+					car.position.x += heading.x * baseSpeed * delta;
+					car.position.z += heading.y * baseSpeed * delta;
+					keepInBounds();
+					updateFines(delta, elapsed);
+					runCollisions();
+					updateHUD();
+				}
+
+				updateCamera(delta);
+				renderer.render(scene, camera);
+			}
+
+			animate();
+
+			window.addEventListener("resize", () => {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize(window.innerWidth, window.innerHeight);
+			});
+		</script>
+	</body>
+</html>
