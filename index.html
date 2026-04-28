@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PARKMAN by Arrive</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1A1A1A; overflow: hidden; font-family: Arial, sans-serif; }
+
+    /* HUD */
+    #hud {
+      position: fixed; top: 0; left: 0; right: 0;
+      padding: 14px 20px;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      pointer-events: none; z-index: 10;
+    }
+    #brand {
+      color: #FF33BB; font-size: 22px; font-weight: 900;
+      letter-spacing: 4px; text-shadow: 0 0 12px #FF33BB88;
+    }
+    #stats { display: flex; gap: 16px; }
+    .stat {
+      background: rgba(0,0,0,0.65); border: 1px solid #5F016F;
+      border-radius: 6px; padding: 5px 14px;
+      color: #F9F5F4; font-size: 11px; text-align: center; letter-spacing: 1px;
+    }
+    .stat span { display: block; font-size: 20px; font-weight: bold; color: #FF33BB; }
+
+    /* Shared overlay base */
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(10,0,15,0.88);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 20; color: #F9F5F4;
+    }
+    .overlay h1 { font-size: 68px; letter-spacing: 10px; margin-bottom: 6px; }
+    .overlay .sub { font-size: 16px; letter-spacing: 3px; margin-bottom: 28px; }
+    .overlay .info { font-size: 20px; margin-bottom: 36px; text-align: center; line-height: 1.7; }
+    .overlay .info span { color: #FF33BB; font-weight: bold; }
+    .overlay button {
+      background: #5F016F; color: #F9F5F4;
+      border: 2px solid #FF33BB; padding: 13px 44px;
+      font-size: 18px; border-radius: 8px; cursor: pointer;
+      letter-spacing: 4px; text-transform: uppercase; transition: all 0.15s;
+    }
+    .overlay button:hover { background: #FF33BB; color: #1A1A1A; }
+    .hint { margin-top: 18px; color: #888; font-size: 13px; letter-spacing: 1px; }
+  </style>
+</head>
+<body>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="brand">ARRIVE</div>
+  <div id="stats">
+    <div class="stat">SCORE<span id="hud-score">0</span></div>
+    <div class="stat">SIGNS<span id="hud-signs">20</span></div>
+    <div class="stat">SPEED<span id="hud-speed">1.0×</span></div>
+  </div>
+</div>
+
+<!-- Start screen -->
+<div id="screen-start" class="overlay">
+  <h1 style="color:#FF33BB">PARKMAN</h1>
+  <div class="sub" style="color:#FFADE4">by ARRIVE</div>
+  <div class="info">
+    Collect all <span>20 parking signs</span>.<br>
+    Avoid the yellow <span>fines</span>!
+  </div>
+  <button id="btn-start">START</button>
+  <div class="hint">WASD or Arrow Keys &nbsp;·&nbsp; turns at intersections</div>
+</div>
+
+<!-- Game-over / win screen -->
+<div id="screen-end" class="overlay" style="display:none">
+  <h1 id="end-title">GAME OVER</h1>
+  <div class="sub" id="end-sub">You got fined!</div>
+  <div class="info">Final Score: <span id="end-score">0</span></div>
+  <button onclick="restartGame()">RETRY</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script>
+'use strict';
+
+// ── Constants ────────────────────────────────────────────────────────────────
+const CELL        = 12;    // world-units between street centre-lines
+const NUM_STREETS = 5;     // 5 lines → 4 city blocks per axis
+const HALF_GRID   = ((NUM_STREETS - 1) * CELL) / 2;   // 24
+const STREET_SNAP = 0.5;   // snap tolerance for intersection detection
+const BLDG_W      = 8;     // building footprint width (< CELL - gap)
+const BASE_SPEED  = 0.10;  // world-units per frame at start
+const TOTAL_SIGNS = 20;
+
+const C_CAR    = 0x5F016F;
+const C_ACCENT = 0xFF33BB;
+const C_GROUND = 0x222222;
+const C_ROAD   = 0x2D2D2D;
+const C_BLDG   = 0xF9F5F4;
+const C_BLDG2  = 0xFFADE4;
+const C_ENEMY  = 0xFFD700;
+const C_SIGN   = 0x0033AA;
+const C_JAM    = 0xFF2200;
+
+// ── Globals ──────────────────────────────────────────────────────────────────
+let scene, camera, renderer;
+let player, playerDir, queueDir;
+let baseSpeed, score, signsLeft, gridlockDone;
+let signs, enemies, jams;
+let gameState = 'menu';   // 'menu' | 'playing' | 'over'
+
+// Precompute street world positions
+const STREETS = Array.from({ length: NUM_STREETS }, (_, i) => -HALF_GRID + i * CELL);
+// -24, -12, 0, 12, 24
+
+// ── Street helpers ───────────────────────────────────────────────────────────
+function nearest(val, arr) {
+  return arr.reduce((best, s) => Math.abs(val - s) < Math.abs(val - best) ? s : best);
+}
+function snapX(x) { return nearest(x, STREETS); }
+function snapZ(z) { return nearest(z, STREETS); }
+function atIntersection(x, z) {
+  return STREETS.some(s => Math.abs(x - s) < STREET_SNAP) &&
+         STREETS.some(s => Math.abs(z - s) < STREET_SNAP);
+}
+
+// ── Scene init ───────────────────────────────────────────────────────────────
+function initScene() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0D0010);
+  scene.fog = new THREE.FogExp2(0x0D0010, 0.014);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 400);
+  camera.position.set(0, 28, 28);
+  camera.lookAt(0, 0, 0);
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // Lighting
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.85);
+  sun.position.set(30, 50, 20);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  scene.add(sun);
+  const purple = new THREE.PointLight(0x9900cc, 1.2, 80);
+  purple.position.set(0, 10, 0);
+  scene.add(purple);
+}
+
+// ── World ────────────────────────────────────────────────────────────────────
+function buildWorld() {
+  // Ground plane
+  const gnd = new THREE.Mesh(
+    new THREE.PlaneGeometry(300, 300),
+    new THREE.MeshLambertMaterial({ color: C_GROUND })
+  );
+  gnd.rotation.x = -Math.PI / 2;
+  gnd.receiveShadow = true;
+  scene.add(gnd);
+
+  // Road surfaces
+  const roadMat = new THREE.MeshLambertMaterial({ color: C_ROAD });
+  STREETS.forEach(z => {
+    const r = new THREE.Mesh(new THREE.PlaneGeometry(300, 4.4), roadMat);
+    r.rotation.x = -Math.PI / 2;
+    r.position.set(0, 0.02, z);
+    scene.add(r);
+  });
+  STREETS.forEach(x => {
+    const r = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 300), roadMat);
+    r.rotation.x = -Math.PI / 2;
+    r.position.set(x, 0.02, 0);
+    scene.add(r);
+  });
+
+  // Buildings between every pair of adjacent streets
+  const rng = mulberry32(42);
+  for (let ci = 0; ci < NUM_STREETS - 1; ci++) {
+    for (let ri = 0; ri < NUM_STREETS - 1; ri++) {
+      const cx = (STREETS[ci] + STREETS[ci + 1]) / 2;
+      const cz = (STREETS[ri] + STREETS[ri + 1]) / 2;
+      const h  = 3 + rng() * 8;
+      const col = rng() < 0.25 ? C_BLDG2 : C_BLDG;
+      const b = new THREE.Mesh(
+        new THREE.BoxGeometry(BLDG_W, h, BLDG_W),
+        new THREE.MeshLambertMaterial({ color: col })
+      );
+      b.position.set(cx, h / 2, cz);
+      b.castShadow = true;
+      scene.add(b);
+    }
+  }
+}
+
+// Deterministic pseudo-random (seeded) so buildings are consistent per run
+function mulberry32(seed) {
+  return function() {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// ── Player ───────────────────────────────────────────────────────────────────
+function makePlayer() {
+  player = new THREE.Group();
+
+  // Body
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(1.6, 0.65, 2.8),
+    new THREE.MeshLambertMaterial({ color: C_CAR })
+  );
+  body.position.y = 0.55; body.castShadow = true;
+  player.add(body);
+
+  // Cabin
+  const cabin = new THREE.Mesh(
+    new THREE.BoxGeometry(1.2, 0.4, 1.5),
+    new THREE.MeshLambertMaterial({ color: C_ACCENT })
+  );
+  cabin.position.set(0, 1.0, -0.2);
+  player.add(cabin);
+
+  // 4 wheels
+  const wGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.28, 10);
+  const wMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+  [[-0.88, 0.32,  1.0], [0.88, 0.32,  1.0],
+   [-0.88, 0.32, -1.0], [0.88, 0.32, -1.0]].forEach(([x,y,z]) => {
+    const w = new THREE.Mesh(wGeo, wMat);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(x, y, z);
+    player.add(w);
+  });
+
+  // Headlights
+  const hlGeo = new THREE.BoxGeometry(0.28, 0.14, 0.08);
+  const hlMat = new THREE.MeshLambertMaterial({ color: 0xFFFFCC, emissive: 0x888844 });
+  [-0.52, 0.52].forEach(ox => {
+    const hl = new THREE.Mesh(hlGeo, hlMat);
+    hl.position.set(ox, 0.55, 1.38);
+    player.add(hl);
+  });
+
+  player.position.set(0, 0, 0);  // centre intersection
+  scene.add(player);
+
+  playerDir = new THREE.Vector3(1, 0, 0);  // start moving +X
+  queueDir  = null;
+}
+
+// ── Signs ────────────────────────────────────────────────────────────────────
+function makeSign(x, z) {
+  const g = new THREE.Group();
+
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.07, 0.07, 1.3, 8),
+    new THREE.MeshLambertMaterial({ color: 0x999999 })
+  );
+  pole.position.y = 0.65;
+  g.add(pole);
+
+  const board = new THREE.Mesh(
+    new THREE.BoxGeometry(0.65, 0.65, 0.08),
+    new THREE.MeshLambertMaterial({ color: C_SIGN })
+  );
+  board.position.y = 1.4;
+  g.add(board);
+
+  // White "P" hint — thin cross shape
+  const pv = new THREE.Mesh(
+    new THREE.BoxGeometry(0.18, 0.42, 0.10),
+    new THREE.MeshLambertMaterial({ color: 0xffffff })
+  );
+  pv.position.set(-0.05, 1.4, 0.05);
+  g.add(pv);
+
+  g.position.set(x, 0, z);
+  g.userData.active = true;
+  scene.add(g);
+  return g;
+}
+
+function spawnSigns(rng) {
+  signs = [];
+  const candidates = [];
+
+  // Mid-segments of horizontal streets
+  for (let ri = 0; ri < NUM_STREETS; ri++) {
+    for (let ci = 0; ci < NUM_STREETS - 1; ci++) {
+      candidates.push([(STREETS[ci] + STREETS[ci+1]) / 2, STREETS[ri]]);
+    }
+  }
+  // Mid-segments of vertical streets
+  for (let ci = 0; ci < NUM_STREETS; ci++) {
+    for (let ri = 0; ri < NUM_STREETS - 1; ri++) {
+      candidates.push([STREETS[ci], (STREETS[ri] + STREETS[ri+1]) / 2]);
+    }
+  }
+
+  // Fisher-Yates shuffle
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+
+  for (let i = 0; i < TOTAL_SIGNS; i++) {
+    signs.push(makeSign(candidates[i][0], candidates[i][1]));
+  }
+}
+
+// ── Enemies ──────────────────────────────────────────────────────────────────
+function makeEnemyMesh() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: C_ENEMY, emissive: 0x886600 });
+  const geo = new THREE.BoxGeometry(1.3, 0.09, 0.85);
+  const p1 = new THREE.Mesh(geo, mat); p1.rotation.z =  0.25; g.add(p1);
+  const p2 = new THREE.Mesh(geo, mat); p2.rotation.z = -0.25; p2.position.y = 0.05; g.add(p2);
+  g.position.y = 1.3;
+  return g;
+}
+
+function spawnEnemies() {
+  enemies = [];
+
+  // Patroller 1 – horizontal, row index 1
+  const e1 = makeEnemyMesh();
+  e1.position.set(STREETS[0], 1.3, STREETS[1]);
+  e1.userData = {
+    type: 'patroller',
+    wps: [
+      new THREE.Vector3(STREETS[0], 1.3, STREETS[1]),
+      new THREE.Vector3(STREETS[NUM_STREETS-1], 1.3, STREETS[1]),
+    ],
+    wi: 0, spd: 0.055,
+  };
+  scene.add(e1); enemies.push(e1);
+
+  // Patroller 2 – vertical, column index 3
+  const e2 = makeEnemyMesh();
+  e2.position.set(STREETS[3], 1.3, STREETS[0]);
+  e2.userData = {
+    type: 'patroller',
+    wps: [
+      new THREE.Vector3(STREETS[3], 1.3, STREETS[0]),
+      new THREE.Vector3(STREETS[3], 1.3, STREETS[NUM_STREETS-1]),
+    ],
+    wi: 0, spd: 0.055,
+  };
+  scene.add(e2); enemies.push(e2);
+
+  // Chaser – starts at opposite corner
+  const e3 = makeEnemyMesh();
+  e3.position.set(STREETS[NUM_STREETS-1], 1.3, STREETS[NUM_STREETS-1]);
+  e3.userData = { type: 'chaser', spd: 0.045 };
+  scene.add(e3); enemies.push(e3);
+}
+
+function updateEnemies(t) {
+  for (const e of enemies) {
+    const ud = e.userData;
+    if (ud.type === 'patroller') {
+      const target = ud.wps[ud.wi];
+      const diff = new THREE.Vector3().subVectors(target, e.position);
+      diff.y = 0;
+      if (diff.length() < 0.4) {
+        ud.wi = (ud.wi + 1) % ud.wps.length;
+      } else {
+        diff.normalize().multiplyScalar(ud.spd);
+        e.position.add(diff);
+      }
+    } else {
+      // Chaser: move along the dominant axis toward player
+      const dx = player.position.x - e.position.x;
+      const dz = player.position.z - e.position.z;
+      if (Math.abs(dx) >= Math.abs(dz)) {
+        e.position.x += Math.sign(dx) * ud.spd;
+        e.position.z = snapZ(e.position.z);
+      } else {
+        e.position.z += Math.sign(dz) * ud.spd;
+        e.position.x = snapX(e.position.x);
+      }
+    }
+    // Float + spin animation
+    e.position.y = 1.2 + Math.sin(t * 2.4 + e.position.x * 0.3) * 0.18;
+    e.rotation.y += 0.025;
+  }
+}
+
+// ── Traffic jams ─────────────────────────────────────────────────────────────
+function spawnGridlock(rng) {
+  if (gridlockDone) return;
+  gridlockDone = true;
+  jams = [];
+
+  const segs = [];
+  for (let ri = 0; ri < NUM_STREETS; ri++)
+    for (let ci = 0; ci < NUM_STREETS - 1; ci++)
+      segs.push([(STREETS[ci]+STREETS[ci+1])/2, STREETS[ri]]);
+  for (let ci = 0; ci < NUM_STREETS; ci++)
+    for (let ri = 0; ri < NUM_STREETS - 1; ri++)
+      segs.push([STREETS[ci], (STREETS[ri]+STREETS[ri+1])/2]);
+
+  // shuffle
+  for (let i = segs.length-1; i > 0; i--) {
+    const j = Math.floor(rng() * (i+1));
+    [segs[i], segs[j]] = [segs[j], segs[i]];
+  }
+
+  const count = 3 + Math.floor(rng() * 3);  // 3-5
+  for (let i = 0; i < count; i++) {
+    const [x, z] = segs[i];
+    const jam = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 1.6, 1.6),
+      new THREE.MeshLambertMaterial({ color: C_JAM, emissive: 0x440000 })
+    );
+    jam.position.set(x, 0.8, z);
+    scene.add(jam);
+    jams.push(jam);
+  }
+}
+
+// ── Collision ────────────────────────────────────────────────────────────────
+function checkCollisions(rng) {
+  const px = player.position.x;
+  const pz = player.position.z;
+
+  // Signs
+  for (const s of signs) {
+    if (!s.userData.active) continue;
+    if (Math.abs(px - s.position.x) < 1.3 && Math.abs(pz - s.position.z) < 1.3) {
+      s.userData.active = false;
+      scene.remove(s);
+      score    += 10;
+      signsLeft -= 1;
+      updateHUD();
+
+      // Speed ramp every 5 signs
+      const collected = TOTAL_SIGNS - signsLeft;
+      if (collected % 5 === 0) baseSpeed *= 1.15;
+
+      // Gridlock event
+      if (score >= 100 && !gridlockDone) spawnGridlock(rng);
+
+      if (signsLeft <= 0) { endGame('win'); return; }
+    }
+  }
+
+  // Enemy fines
+  for (const e of enemies) {
+    if (Math.abs(px - e.position.x) < 1.6 && Math.abs(pz - e.position.z) < 1.6) {
+      endGame('over'); return;
+    }
+  }
+
+  // Traffic jams
+  for (const j of jams) {
+    if (Math.abs(px - j.position.x) < 1.6 && Math.abs(pz - j.position.z) < 1.6) {
+      endGame('over'); return;
+    }
+  }
+}
+
+// ── Player movement ──────────────────────────────────────────────────────────
+function updatePlayer() {
+  const px = player.position.x;
+  const pz = player.position.z;
+
+  // Apply queued direction change at intersections
+  if (queueDir && atIntersection(px, pz)) {
+    player.position.x = snapX(px);
+    player.position.z = snapZ(pz);
+    playerDir = queueDir.clone();
+    queueDir  = null;
+  }
+
+  // Advance
+  player.position.x += playerDir.x * baseSpeed;
+  player.position.z += playerDir.z * baseSpeed;
+
+  // Keep on street axis
+  if (Math.abs(playerDir.x) > 0) {
+    player.position.z = snapZ(player.position.z);
+  } else {
+    player.position.x = snapX(player.position.x);
+  }
+
+  // Wrap at grid edges
+  const edge = HALF_GRID + CELL * 0.5;
+  if (player.position.x >  edge) player.position.x = -HALF_GRID;
+  if (player.position.x < -edge) player.position.x =  HALF_GRID;
+  if (player.position.z >  edge) player.position.z = -HALF_GRID;
+  if (player.position.z < -edge) player.position.z =  HALF_GRID;
+
+  // Rotate to face direction
+  if      (playerDir.x >  0) player.rotation.y = -Math.PI / 2;
+  else if (playerDir.x <  0) player.rotation.y =  Math.PI / 2;
+  else if (playerDir.z >  0) player.rotation.y =  0;
+  else if (playerDir.z <  0) player.rotation.y =  Math.PI;
+}
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+function updateCamera() {
+  const back = playerDir.clone().multiplyScalar(-13);
+  const target = player.position.clone().add(new THREE.Vector3(back.x, 11, back.z));
+  camera.position.lerp(target, 0.07);
+  camera.lookAt(player.position.x, 0, player.position.z);
+}
+
+// ── HUD ──────────────────────────────────────────────────────────────────────
+function updateHUD() {
+  document.getElementById('hud-score').textContent = score;
+  document.getElementById('hud-signs').textContent = signsLeft;
+  document.getElementById('hud-speed').textContent = (baseSpeed / BASE_SPEED).toFixed(1) + '×';
+}
+
+// ── Input ────────────────────────────────────────────────────────────────────
+const KEY_DIR = {
+  ArrowUp:    new THREE.Vector3( 0, 0, -1),
+  KeyW:       new THREE.Vector3( 0, 0, -1),
+  ArrowDown:  new THREE.Vector3( 0, 0,  1),
+  KeyS:       new THREE.Vector3( 0, 0,  1),
+  ArrowLeft:  new THREE.Vector3(-1, 0,  0),
+  KeyA:       new THREE.Vector3(-1, 0,  0),
+  ArrowRight: new THREE.Vector3( 1, 0,  0),
+  KeyD:       new THREE.Vector3( 1, 0,  0),
+};
+document.addEventListener('keydown', e => {
+  if (KEY_DIR[e.code]) {
+    e.preventDefault();
+    if (gameState === 'playing') queueDir = KEY_DIR[e.code].clone();
+  }
+});
+
+// ── Game flow ────────────────────────────────────────────────────────────────
+let _rng;
+
+function startGame() {
+  // Clear previous scene objects (keep lights/camera setup)
+  while (scene.children.length) scene.remove(scene.children[0]);
+
+  // Re-add lights after clear
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.85);
+  sun.position.set(30, 50, 20); sun.castShadow = true;
+  scene.add(sun);
+  const purple = new THREE.PointLight(0x9900cc, 1.2, 80);
+  purple.position.set(0, 10, 0);
+  scene.add(purple);
+
+  score        = 0;
+  signsLeft    = TOTAL_SIGNS;
+  baseSpeed    = BASE_SPEED;
+  gridlockDone = false;
+  jams         = [];
+
+  _rng = mulberry32(Date.now() | 0);
+
+  buildWorld();
+  makePlayer();
+  spawnSigns(_rng);
+  spawnEnemies();
+  updateHUD();
+
+  document.getElementById('screen-start').style.display = 'none';
+  document.getElementById('screen-end').style.display   = 'none';
+  gameState = 'playing';
+}
+
+function endGame(type) {
+  gameState = 'over';
+  const el = document.getElementById('screen-end');
+  document.getElementById('end-score').textContent = score;
+  if (type === 'win') {
+    document.getElementById('end-title').textContent = 'YOU WIN!';
+    document.getElementById('end-title').style.color = '#FF33BB';
+    document.getElementById('end-sub').textContent   = 'All parking signs collected!';
+  } else {
+    document.getElementById('end-title').textContent = 'GAME OVER';
+    document.getElementById('end-title').style.color = '#FFD700';
+    document.getElementById('end-sub').textContent   = 'You got fined!';
+  }
+  el.style.display = 'flex';
+}
+
+function restartGame() { startGame(); }
+
+// ── Main loop ────────────────────────────────────────────────────────────────
+function loop() {
+  requestAnimationFrame(loop);
+  const t = performance.now() * 0.001;
+
+  if (gameState === 'playing') {
+    updatePlayer();
+    updateEnemies(t);
+    checkCollisions(_rng);
+    updateCamera();
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+initScene();
+buildWorld();  // preview on menu screen
+loop();
+
+document.getElementById('btn-start').addEventListener('click', startGame);
+</script>
+</body>
+</html>
