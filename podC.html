@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PARKMAN — Arrive</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <style>
+    /* ─── Reset & Base ─────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1A1A1A;
+      overflow: hidden;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+
+    #canvas-container {
+      position: fixed;
+      inset: 0;
+    }
+
+    /* ─── Design Tokens ────────────────────────────────────── */
+    :root {
+      --purple:     #5F016F;
+      --pink:       #FF33BB;
+      --pink-light: #FFADE4;
+      --gold:       #FFD700;
+      --dark:       #0D0D0D;
+      --glass:      rgba(15, 0, 20, 0.72);
+      --glow-purple: 0 0 12px #5F016F, 0 0 28px rgba(95,1,111,0.5);
+      --glow-pink:   0 0 12px #FF33BB, 0 0 28px rgba(255,51,187,0.4);
+    }
+
+    /* ─── Arrive Logo — Top Left ───────────────────────────── */
+    #arrive-logo {
+      position: fixed;
+      top: 24px;
+      left: 28px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      z-index: 100;
+      text-decoration: none;
+    }
+
+    /* Hexagonal brand mark built purely in CSS */
+    .logo-mark {
+      width: 42px;
+      height: 42px;
+      background: linear-gradient(135deg, var(--purple), var(--pink));
+      clip-path: polygon(50% 0%, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--glow-pink);
+      animation: pulse-logo 3s ease-in-out infinite;
+    }
+
+    .logo-mark::after {
+      content: 'A';
+      color: #fff;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: -1px;
+    }
+
+    .logo-text {
+      display: flex;
+      flex-direction: column;
+      line-height: 1;
+    }
+
+    .logo-text .brand {
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      background: linear-gradient(90deg, #fff 0%, var(--pink-light) 60%, var(--pink) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .logo-text .tagline {
+      font-size: 9px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--pink);
+      opacity: 0.8;
+    }
+
+    @keyframes pulse-logo {
+      0%, 100% { box-shadow: var(--glow-pink); }
+      50%       { box-shadow: 0 0 20px var(--pink), 0 0 40px rgba(255,51,187,0.6); }
+    }
+
+    /* ─── Dashboard HUD — Bottom Center ───────────────────── */
+    #hud {
+      position: fixed;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: flex-end;
+      gap: 20px;
+      z-index: 100;
+    }
+
+    /* Shared gauge card */
+    .gauge-card {
+      background: var(--glass);
+      border: 1px solid rgba(255, 51, 187, 0.25);
+      border-radius: 16px;
+      padding: 14px 22px 12px;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,51,187,0.15);
+      min-width: 120px;
+    }
+
+    .gauge-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--pink);
+      opacity: 0.8;
+    }
+
+    .gauge-value {
+      font-size: 42px;
+      font-weight: 900;
+      line-height: 1;
+      background: linear-gradient(180deg, #fff 0%, var(--pink-light) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-variant-numeric: tabular-nums;
+      text-shadow: none;
+      filter: drop-shadow(0 0 8px var(--pink));
+    }
+
+    .gauge-unit {
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(255,173,228,0.6);
+    }
+
+    /* Score bar — thin accent line below value */
+    #score-card .gauge-value { font-size: 48px; }
+
+    #score-card::after {
+      content: '';
+      display: block;
+      width: 60%;
+      height: 2px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, transparent, var(--pink), transparent);
+      margin-top: 4px;
+    }
+
+    /* Speed — arc gauge ring */
+    .speed-ring-wrap {
+      position: relative;
+      width: 80px;
+      height: 80px;
+    }
+
+    .speed-ring-wrap svg {
+      width: 80px;
+      height: 80px;
+      transform: rotate(-135deg);
+    }
+
+    .speed-ring-bg {
+      fill: none;
+      stroke: rgba(255,51,187,0.12);
+      stroke-width: 6;
+      stroke-linecap: round;
+    }
+
+    .speed-ring-fill {
+      fill: none;
+      stroke: url(#speedGrad);
+      stroke-width: 6;
+      stroke-linecap: round;
+      stroke-dasharray: 188;   /* 2π × r = 2π × 30 ≈ 188 */
+      stroke-dashoffset: 94;   /* 50% at start; JS will update */
+      transition: stroke-dashoffset 0.4s cubic-bezier(.4,0,.2,1);
+    }
+
+    .speed-center-value {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .speed-center-value span:first-child {
+      font-size: 22px;
+      font-weight: 900;
+      color: #fff;
+      line-height: 1;
+      filter: drop-shadow(0 0 6px var(--pink));
+    }
+
+    .speed-center-value span:last-child {
+      font-size: 8px;
+      letter-spacing: 2px;
+      color: var(--pink);
+      opacity: 0.7;
+    }
+
+    /* Central divider ornament */
+    #hud-center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding-bottom: 6px;
+    }
+
+    .hud-brand-pill {
+      background: linear-gradient(135deg, var(--purple), var(--pink));
+      padding: 4px 16px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 3px;
+      color: #fff;
+      box-shadow: var(--glow-purple);
+    }
+
+    .hud-pip-row {
+      display: flex;
+      gap: 5px;
+    }
+
+    .hud-pip {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--pink);
+      opacity: 0.35;
+      transition: opacity 0.3s, box-shadow 0.3s;
+    }
+
+    .hud-pip.active {
+      opacity: 1;
+      box-shadow: 0 0 6px var(--pink);
+    }
+
+    /* ─── Top-right: signs remaining ──────────────────────── */
+    #signs-counter {
+      position: fixed;
+      top: 24px;
+      right: 28px;
+      z-index: 100;
+      background: var(--glass);
+      border: 1px solid rgba(255,51,187,0.2);
+      border-radius: 12px;
+      padding: 10px 18px;
+      backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    }
+
+    #signs-counter .sc-label {
+      font-size: 8px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--pink);
+      opacity: 0.7;
+    }
+
+    #signs-counter .sc-val {
+      font-size: 26px;
+      font-weight: 900;
+      color: #0033AA;
+      filter: drop-shadow(0 0 6px #0055ff);
+      line-height: 1;
+    }
+
+    /* ─── Game Over Overlay ────────────────────────────────── */
+    #gameover-screen {
+      display: none;                 /* hidden by default */
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 28px;
+
+      /* Animated background */
+      background:
+        radial-gradient(ellipse at 30% 40%, rgba(95,1,111,0.55) 0%, transparent 60%),
+        radial-gradient(ellipse at 70% 60%, rgba(255,51,187,0.35) 0%, transparent 60%),
+        rgba(10, 0, 14, 0.92);
+      backdrop-filter: blur(8px);
+      animation: go-in 0.4s cubic-bezier(.4,0,.2,1) forwards;
+    }
+
+    #gameover-screen.visible {
+      display: flex;
+    }
+
+    @keyframes go-in {
+      from { opacity: 0; transform: scale(1.04); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    .go-title-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .go-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      color: var(--pink);
+      opacity: 0.8;
+    }
+
+    .go-title {
+      font-size: clamp(52px, 10vw, 96px);
+      font-weight: 900;
+      letter-spacing: -2px;
+      text-transform: uppercase;
+      line-height: 0.9;
+      background: linear-gradient(
+        135deg,
+        #fff         0%,
+        var(--pink-light) 35%,
+        var(--pink)  65%,
+        var(--purple) 100%
+      );
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 0 30px rgba(255,51,187,0.5));
+      animation: title-flicker 0.08s step-end 3;
+    }
+
+    @keyframes title-flicker {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.85; }
+    }
+
+    .go-subtitle {
+      font-size: 13px;
+      letter-spacing: 3px;
+      color: rgba(255,173,228,0.6);
+      text-transform: uppercase;
+    }
+
+    /* Score display on Game Over */
+    .go-score-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 18px 48px;
+      border: 1px solid rgba(255,51,187,0.25);
+      border-radius: 16px;
+      background: rgba(95,1,111,0.2);
+      box-shadow: inset 0 0 32px rgba(95,1,111,0.3), var(--glow-purple);
+    }
+
+    .go-score-label {
+      font-size: 9px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--pink);
+      opacity: 0.7;
+    }
+
+    #final-score {
+      font-size: 64px;
+      font-weight: 900;
+      color: #fff;
+      line-height: 1;
+      filter: drop-shadow(0 0 16px var(--pink));
+      font-variant-numeric: tabular-nums;
+    }
+
+    .go-score-pts {
+      font-size: 10px;
+      letter-spacing: 3px;
+      color: var(--pink-light);
+      text-transform: uppercase;
+      opacity: 0.6;
+    }
+
+    /* RETRY Button */
+    #retry-btn {
+      position: relative;
+      padding: 16px 56px;
+      border: none;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: 5px;
+      text-transform: uppercase;
+      color: #fff;
+      background: linear-gradient(135deg, var(--purple) 0%, var(--pink) 100%);
+      box-shadow: 0 0 0 0 rgba(255,51,187,0.5);
+      transition: transform 0.15s, box-shadow 0.15s;
+      overflow: hidden;
+    }
+
+    #retry-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, var(--pink) 0%, var(--purple) 100%);
+      opacity: 0;
+      transition: opacity 0.3s;
+      border-radius: inherit;
+    }
+
+    #retry-btn:hover { transform: scale(1.06); box-shadow: var(--glow-pink); }
+    #retry-btn:hover::before { opacity: 1; }
+    #retry-btn:active { transform: scale(0.97); }
+
+    #retry-btn span { position: relative; z-index: 1; }
+
+    /* Scan-line effect on Game Over */
+    #gameover-screen::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 3px,
+        rgba(0,0,0,0.06) 3px,
+        rgba(0,0,0,0.06) 4px
+      );
+      pointer-events: none;
+    }
+
+    /* ─── Edge accent lines ────────────────────────────────── */
+    .edge-line {
+      position: fixed;
+      z-index: 90;
+      background: linear-gradient(90deg, var(--purple), var(--pink), var(--purple));
+      height: 2px;
+      width: 100%;
+      opacity: 0.5;
+      box-shadow: 0 0 8px var(--pink);
+    }
+
+    #edge-top    { top: 0; left: 0; }
+    #edge-bottom { bottom: 0; left: 0; }
+  </style>
+</head>
+<body>
+
+  <!-- Three.js canvas -->
+  <div id="canvas-container"></div>
+
+  <!-- Edge accent lines -->
+  <div class="edge-line" id="edge-top"></div>
+  <div class="edge-line" id="edge-bottom"></div>
+
+  <!-- ── Arrive Logo — top left ── -->
+  <div id="arrive-logo">
+    <div class="logo-mark"></div>
+    <div class="logo-text">
+      <span class="brand">Arrive</span>
+      <span class="tagline">Smart Parking</span>
+    </div>
+  </div>
+
+  <!-- ── Signs remaining — top right ── -->
+  <div id="signs-counter">
+    <span class="sc-label">Signs Left</span>
+    <span class="sc-val" id="signs-left">20</span>
+  </div>
+
+  <!-- ── Dashboard HUD — bottom center ── -->
+  <div id="hud">
+
+    <!-- Score card -->
+    <div class="gauge-card" id="score-card">
+      <span class="gauge-label">Score</span>
+      <span class="gauge-value" id="score-display">0</span>
+      <span class="gauge-unit">points</span>
+    </div>
+
+    <!-- Centre ornament -->
+    <div id="hud-center">
+      <div class="hud-brand-pill">PARKMAN</div>
+      <div class="hud-pip-row">
+        <div class="hud-pip active" id="pip-1"></div>
+        <div class="hud-pip" id="pip-2"></div>
+        <div class="hud-pip" id="pip-3"></div>
+        <div class="hud-pip" id="pip-4"></div>
+      </div>
+    </div>
+
+    <!-- Speed card with arc gauge -->
+    <div class="gauge-card" id="speed-card">
+      <span class="gauge-label">Speed</span>
+      <div class="speed-ring-wrap">
+        <svg viewBox="0 0 80 80">
+          <defs>
+            <linearGradient id="speedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%"   stop-color="#5F016F"/>
+              <stop offset="100%" stop-color="#FF33BB"/>
+            </linearGradient>
+          </defs>
+          <!-- 3/4 arc: r=30, center=40,40 -->
+          <circle class="speed-ring-bg"   cx="40" cy="40" r="30"
+                  stroke-dasharray="188" stroke-dashoffset="47"/>
+          <circle class="speed-ring-fill" id="speed-ring" cx="40" cy="40" r="30"
+                  stroke-dasharray="188" stroke-dashoffset="188"/>
+        </svg>
+        <div class="speed-center-value">
+          <span id="speed-display">1.0</span>
+          <span>m/s</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Game Over Screen (hidden by default) ── -->
+  <div id="gameover-screen">
+    <div class="go-title-wrap">
+      <span class="go-eyebrow">Swedish Fines Win</span>
+      <h1 class="go-title">Game<br>Over</h1>
+      <span class="go-subtitle">Your parking permit has been revoked</span>
+    </div>
+
+    <div class="go-score-wrap">
+      <span class="go-score-label">Final Score</span>
+      <span id="final-score">0</span>
+      <span class="go-score-pts">points collected</span>
+    </div>
+
+    <button id="retry-btn" onclick="retryGame()">
+      <span>&#8634;&nbsp; Retry</span>
+    </button>
+  </div>
+
+
+  <script>
+    /* ═══════════════════════════════════════════════════════
+       THREE.JS SCENE SETUP
+    ═══════════════════════════════════════════════════════ */
+    const container = document.getElementById('canvas-container');
+    const W = window.innerWidth, H = window.innerHeight;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1A1A1A);
+    scene.fog = new THREE.Fog(0x1A1A1A, 30, 80);
+
+    const camera = new THREE.PerspectiveCamera(55, W / H, 0.1, 200);
+    camera.position.set(0, 18, 20);
+    camera.lookAt(0, 0, 0);
+
+    /* Lighting */
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const dirLight = new THREE.DirectionalLight(0xffeeff, 1.2);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    scene.add(dirLight);
+    const pinkLight = new THREE.PointLight(0xFF33BB, 2, 30);
+    pinkLight.position.set(0, 8, 0);
+    scene.add(pinkLight);
+
+    /* Ground */
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(60, 60),
+      new THREE.MeshLambertMaterial({ color: 0x1A1A1A })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    /* Grid lines on ground */
+    const gridHelper = new THREE.GridHelper(60, 30, 0x2a002a, 0x220022);
+    gridHelper.position.y = 0.01;
+    scene.add(gridHelper);
+
+    /* ─── Sample Buildings ──────────────────────────────── */
+    const buildingMat = new THREE.MeshLambertMaterial({ color: 0xF9F5F4 });
+    const accentMat   = new THREE.MeshLambertMaterial({ color: 0xFFADE4 });
+
+    function addBuilding(x, z, w, h, d) {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), buildingMat);
+      body.position.set(x, h / 2, z);
+      body.castShadow = true;
+      scene.add(body);
+      // accent top stripe
+      const top = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.15, d + 0.1), accentMat);
+      top.position.set(x, h + 0.07, z);
+      scene.add(top);
+    }
+
+    [[-8,-8,3,5,3], [8,-8,3,6,3], [-8,8,3,4,3], [8,8,3,7,3],
+     [-14,-2,3,5,3], [14,-2,3,5,3], [-3,-14,3,4,3], [3,14,3,6,3]]
+      .forEach(b => addBuilding(...b));
+
+    /* ─── Player Car ────────────────────────────────────── */
+    const carGroup = new THREE.Group();
+
+    const carBody = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 0.6, 3),
+      new THREE.MeshLambertMaterial({ color: 0x5F016F })
+    );
+    carBody.position.y = 0.5;
+    carGroup.add(carBody);
+
+    const cabinMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1.3, 0.5, 1.6),
+      new THREE.MeshLambertMaterial({ color: 0xFF33BB })
+    );
+    cabinMesh.position.set(0, 1.05, -0.1);
+    carGroup.add(cabinMesh);
+
+    const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+    [[-0.9, 0.25, 1], [0.9, 0.25, 1], [-0.9, 0.25, -1], [0.9, 0.25, -1]]
+      .forEach(([wx, wy, wz]) => {
+        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.22, 12), wheelMat);
+        w.rotation.z = Math.PI / 2;
+        w.position.set(wx, wy, wz);
+        carGroup.add(w);
+      });
+
+    scene.add(carGroup);
+
+    /* ═══════════════════════════════════════════════════════
+       SWEDISH PARKING FINE — Hovering Yellow Rectangle
+    ═══════════════════════════════════════════════════════ */
+
+    /**
+     * Creates one Swedish Parking Fine enemy.
+     * Returns the THREE.Group so the caller can position it.
+     *
+     * Animation: the group oscillates vertically using a sine wave,
+     * giving the appearance of hovering/floating.
+     *
+     * Usage:
+     *   const fine = createParkingFine();
+     *   fine.position.set(x, 1.2, z);
+     *   scene.add(fine);
+     *   fines.push(fine);   // keep ref for animate loop
+     */
+    function createParkingFine() {
+      const group = new THREE.Group();
+
+      /* Main rectangle — slightly folded look via a thin box */
+      const bodyGeo = new THREE.BoxGeometry(0.8, 0.02, 0.55);
+      const bodyMat = new THREE.MeshLambertMaterial({
+        color: 0xFFD700,
+        emissive: 0xAA8800,
+        emissiveIntensity: 0.4
+      });
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      group.add(body);
+
+      /* Slight "fold" — a thin strip along the top edge */
+      const foldGeo = new THREE.BoxGeometry(0.8, 0.02, 0.1);
+      const fold = new THREE.Mesh(foldGeo, new THREE.MeshLambertMaterial({
+        color: 0xE6B800,
+        emissive: 0x664400,
+        emissiveIntensity: 0.3
+      }));
+      fold.position.set(0, 0.012, -0.225);
+      fold.rotation.x = THREE.MathUtils.degToRad(18);
+      group.add(fold);
+
+      /* Fine text illusion — dark stripe across the centre */
+      const stripe = new THREE.Mesh(
+        new THREE.BoxGeometry(0.55, 0.025, 0.06),
+        new THREE.MeshLambertMaterial({ color: 0x222200 })
+      );
+      stripe.position.set(0, 0.022, 0.05);
+      group.add(stripe);
+
+      /* Glow point light underneath */
+      const glow = new THREE.PointLight(0xFFD700, 1.5, 2.5);
+      glow.position.set(0, -0.3, 0);
+      group.add(glow);
+
+      /* Store oscillation phase so each fine is offset */
+      group.userData.phase = Math.random() * Math.PI * 2;
+      group.userData.baseY = 1.2;
+
+      return group;
+    }
+
+    /* Spawn 3 fines */
+    const fines = [];
+    [[-4, 0, 4], [4, 0, -4], [0, 0, -6]].forEach(([x, , z]) => {
+      const fine = createParkingFine();
+      fine.position.set(x, 1.2, z);
+      fine.userData.baseY = 1.2;
+      scene.add(fine);
+      fines.push(fine);
+    });
+
+    /* ═══════════════════════════════════════════════════════
+       GAME STATE
+    ═══════════════════════════════════════════════════════ */
+    let score = 0;
+    let baseSpeed = 1.0;
+    let signsLeft = 20;
+    let gameOver = false;
+
+    /* ─── HUD update helpers ──────────────────────────────── */
+    const scoreDisplay = document.getElementById('score-display');
+    const speedDisplay = document.getElementById('speed-display');
+    const speedRing    = document.getElementById('speed-ring');
+    const signsEl      = document.getElementById('signs-left');
+    const pips         = [1,2,3,4].map(i => document.getElementById(`pip-${i}`));
+
+    function updateHUD() {
+      scoreDisplay.textContent = score;
+      speedDisplay.textContent = baseSpeed.toFixed(1);
+
+      /* Arc gauge: max speed assumed = 3.0, full arc = 188 * 0.75 = 141 dashes */
+      const pct     = Math.min(baseSpeed / 3.0, 1);
+      const maxDash = 141;          /* 3/4 of circumference */
+      speedRing.style.strokeDashoffset = 188 - pct * maxDash;
+
+      signsEl.textContent = signsLeft;
+
+      /* Pip row — one pip per 5 signs collected */
+      const collected = 20 - signsLeft;
+      pips.forEach((p, i) => {
+        p.classList.toggle('active', collected >= (i + 1) * 5);
+      });
+    }
+
+    /* ─── Trigger game over ───────────────────────────────── */
+    function triggerGameOver() {
+      if (gameOver) return;
+      gameOver = true;
+      document.getElementById('final-score').textContent = score;
+      const go = document.getElementById('gameover-screen');
+      go.classList.add('visible');
+    }
+
+    /* ─── Retry ───────────────────────────────────────────── */
+    function retryGame() {
+      score = 0;
+      baseSpeed = 1.0;
+      signsLeft = 20;
+      gameOver = false;
+      carGroup.position.set(0, 0, 0);
+      updateHUD();
+      const go = document.getElementById('gameover-screen');
+      go.classList.remove('visible');
+    }
+
+    /* ─── Demo: simulate score/speed changes ──────────────── */
+    function simulateProgress() {
+      if (gameOver) return;
+      if (signsLeft > 0) {
+        signsLeft--;
+        score += 10;
+        if (score % 50 === 0) baseSpeed = +(baseSpeed * 1.15).toFixed(2);
+        updateHUD();
+      } else {
+        triggerGameOver();
+      }
+    }
+
+    /* Press Space to collect a sign (demo) */
+    window.addEventListener('keydown', e => {
+      if (e.code === 'Space' && !gameOver) { e.preventDefault(); simulateProgress(); }
+      if (e.code === 'KeyG') triggerGameOver();   /* G → force Game Over (demo) */
+    });
+
+    /* ═══════════════════════════════════════════════════════
+       ANIMATION LOOP
+    ═══════════════════════════════════════════════════════ */
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+
+      /* Oscillate each fine — sine wave hover */
+      fines.forEach(fine => {
+        fine.position.y = fine.userData.baseY + Math.sin(t * 2.2 + fine.userData.phase) * 0.18;
+        fine.rotation.y = t * 0.6 + fine.userData.phase;   /* slow spin */
+      });
+
+      /* Pink point light pulse */
+      pinkLight.intensity = 1.6 + Math.sin(t * 1.8) * 0.6;
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+    updateHUD();
+
+    /* ─── Resize ──────────────────────────────────────────── */
+    window.addEventListener('resize', () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    });
+  </script>
+</body>
+</html>
