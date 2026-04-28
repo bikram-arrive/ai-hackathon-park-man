@@ -1,0 +1,66 @@
+<!-- Drop inside <body> in your index.html -->
+
+<!--
+  STREET MAP  (top-down, 1 unit ≈ 1 metre, origin at centre)
+  City is 100 × 100 units ( -50 … +50 on both axes ).
+
+  Building blocks occupy the unmarked rectangles below.
+  Only the labelled corridors are driveable roads — signs must
+  only be placed inside these zones.
+
+  ┌──────────────────────────────────────────────────────┐
+  │  X: -50 ──────────────────────────────────────── +50 │
+  │                                                       │
+  │  [BLOCK]  │  west-blvd  │  [BLOCK]  │  east-blvd  │  [BLOCK]  Z: -50
+  │           │  x:-30..-22 │           │  x: 22.. 30 │
+  │  ─────────┼─────────────┼───────────┼─────────────┼─────────  Z: -30 ┐
+  │           │             │           │             │          north-ave
+  │  ─────────┼─────────────┼───────────┼─────────────┼─────────  Z: -22 ┘
+  │           │             │           │             │
+  │  [BLOCK]  │             │  [BLOCK]  │             │  [BLOCK]
+  │           │             │           │             │
+  │  ─────────┼─────────────┼───────────┼─────────────┼─────────  Z:  -4 ┐
+  │           │             │           │             │          main-st
+  │  ─────────┼─────────────┼───────────┼─────────────┼─────────  Z:   4 ┘
+  │           │             │           │             │
+  │  [BLOCK]  │             │  [BLOCK]  │             │  [BLOCK]
+  │           │             │           │             │
+  │  ─────────┼─────────────┼───────────┼─────────────┼─────────  Z:  22 ┐
+  │           │             │           │             │          south-ave
+  │  ─────────┼─────────────┼───────────┼─────────────┼─────────  Z:  30 ┘
+  │                                                       │
+  │  [BLOCK]              [BLOCK]              [BLOCK]    Z: +50
+  └──────────────────────────────────────────────────────┘
+-->
+<script>
+  // Each entry is one driveable road corridor in world-space (x/z).
+  // spawnSigns() reads this array — add, remove, or resize entries
+  // whenever the map layout changes.
+  window.STREET_ZONES = [
+    // ── Horizontal streets (span full X width) ──────────────────
+    { name: 'north-avenue', xMin: -50, xMax: 50, zMin: -30, zMax: -22 },
+    { name: 'main-street',  xMin: -50, xMax: 50, zMin:  -4, zMax:   4 },
+    { name: 'south-avenue', xMin: -50, xMax: 50, zMin:  22, zMax:  30 },
+    // ── Vertical streets (span full Z height) ───────────────────
+    { name: 'west-boulevard', xMin: -30, xMax: -22, zMin: -50, zMax: 50 },
+    { name: 'east-boulevard', xMin:  22, xMax:  30, zMin: -50, zMax: 50 },
+  ];
+</script>
+
+<div id="hud" style="
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  font-family: monospace;
+  font-size: 20px;
+  color: #ffffff;
+  text-shadow: 1px 1px 3px #000;
+  pointer-events: none;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+">
+  <span id="hud-score">Score: 0</span>
+  <span id="hud-speed">Speed: 0 km/h</span>
+</div>
